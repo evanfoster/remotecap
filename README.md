@@ -63,3 +63,8 @@ optional arguments:
 4. I wanted semi-live viewing of my capture files. Being able to hit `c-R` to get new packets is nice.
 5. I wanted to have a live display of how large my capture files were growing and the rate they were growing at.
 6. I wanted more practice using `asyncio` and associated libraries. I've messed with Tornado in the past, but `asyncio` was very different and fun to learn.
+
+### Various notes
+
+* Currently, there are a couple tight loops that have `assert` statements in them. These can be pretty expensive and aren't really necessary for things to run. If you're running into issues, try running `python` with the `-O` flag, which will strip out asserts during compilation.
+
