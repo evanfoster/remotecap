@@ -18,6 +18,14 @@ import aiofiles
 import asyncssh
 
 
+def sizeof_fmt(num, suffix='B'):
+    for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
+        if abs(num) < 1024.0:
+            return "%3.1f%s%s" % (num, unit, suffix)
+        num /= 1024.0
+    return "%.1f%s%s" % (num, 'Yi', suffix)
+
+
 class MySSHClientSession(asyncssh.SSHClientSession):
     def __init__(self, capture_file, log_file, data_queue, print_queue):
         """
@@ -92,6 +100,7 @@ async def print_queue_worker(print_queue):
     """
     while True:
         row, data = await print_queue.get()
+        assert isinstance(row, int)
         assert isinstance(data, str)
         term.pos(row, 1)
         term.clearLine()
@@ -99,48 +108,69 @@ async def print_queue_worker(print_queue):
 
 
 class FileSize(object):
-    def __init__(self, print_queue, machines, separator, refresh_time=5):
+    """
+    Class that calculates the file size of capture files and rate at which those files are growing. Is terminal-size
+    aware so changing the size of your window won't screw things up. Doesn't do the printing itself, instead punting
+    that over to print_queue_worker.
+    """
+
+    def __init__(self, print_queue, capture_files, separator, refresh_time=5):
+        """
+
+        :type refresh_time: int
+        :type separator: int
+        :type capture_files: list[Path]
+        :type print_queue: Queue
+        """
         self.print_queue = print_queue
-        self.machines = machines
+        self.capture_files = capture_files
         self.separator = separator
         self.refresh_time = refresh_time
         self.old_values = {}
+        # Tuple containing the # rows and # columns
         self.size = (0, 0)
 
     def setup(self):
+        """
+        Prepares the terminal for output and  prints the file names 4 rows from the bottom.
+        :return:
+        :rtype:
+        """
         term.clear()
         init = 'Capture file:'.ljust(self.separator)
-        init += ''.join(str(capture_file.name).ljust(self.separator) for capture_file in self.machines)
+        init += ''.join(str(capture_file.name).ljust(self.separator) for capture_file in self.capture_files)
         self.print_queue.put_nowait((self.size[0] - 4, init))
 
     async def file_size_worker(self):
-        def sizeof_fmt(num, suffix='B'):
-            for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
-                if abs(num) < 1024.0:
-                    return "%3.1f%s%s" % (num, unit, suffix)
-                num /= 1024.0
-            return "%.1f%s%s" % (num, 'Yi', suffix)
-
+        """
+        Prints the sizes and rates 1 and 2 rows up from the bottom, respectively.
+        :return:
+        :rtype:
+        """
         while True:
             size = term.getSize()
+            # Terminal size has changed, we need to set up again or things will look wonky.
             if size != self.size:
                 self.size = size
                 self.setup()
             try:
-                size_list = [sizeof_fmt(machine.stat().st_size) for machine in self.machines]
+                size_list = [sizeof_fmt(machine.stat().st_size) for machine in self.capture_files]
             except FileNotFoundError:
+                # Since the file size worker starts at the same time we begin capturing, odds are the file won't exist
+                # for a while.
                 await asyncio.sleep(self.refresh_time)
                 continue
             size_string = 'File size:'.ljust(self.separator)
             size_string += ''.join(size.ljust(self.separator) for size in size_list)
             self.print_queue.put_nowait((self.size[0] - 1, size_string))
+            # Can't make a rate if you don't have a delta.
             if len(self.old_values) > 0:
                 rate_list = [sizeof_fmt((machine.stat().st_size - self.old_values[machine]) / self.refresh_time) + '/s'
-                             for machine in self.machines]
+                             for machine in self.capture_files]
                 rate_string = 'Rate:'.ljust(self.separator)
                 rate_string += ''.join(rate.ljust(self.separator) for rate in rate_list)
                 self.print_queue.put_nowait((self.size[0] - 2, rate_string))
-            self.old_values = {machine: machine.stat().st_size for machine in self.machines}
+            self.old_values = {machine: machine.stat().st_size for machine in self.capture_files}
             await asyncio.sleep(self.refresh_time)
 
 
@@ -156,7 +186,7 @@ def main():
     parser.add_argument('-f', '--filter', default='not port 22', type=str, help=help_string)
     default_key_location = home_directory / '.ssh' / 'id_rsa'
     help_string = '''Location of SSH private keys to use. Can be specified multiple times.'''
-    parser.add_argument('-k', '--key',  default=[default_key_location], action='append', help=help_string)
+    parser.add_argument('-k', '--key', default=[default_key_location], action='append', help=help_string)
     help_string = '''Interface to perform the capture with on the remote machine(s).'''
     parser.add_argument('-i', '--interface', default='any', type=str, help=help_string)
     help_string = 'Password to use for SSH. SSH keys are recommended instead.'
@@ -186,6 +216,7 @@ def main():
     packet_length = args.packet_length
     user = args.user
     refresh_interval = args.refresh_interval
+    # If we're capturing from more than one machine, we want to create a folder containing our capture files.
     if len(machines) > 1:
         Path(args.filename).mkdir(exist_ok=True)
         capture_file_name = {machine: Path(args.filename) / '{}.cap'.format(machine) for machine in machines}
@@ -193,6 +224,7 @@ def main():
     else:
         capture_file_name = {machines[0]: Path(args.filename)}
         log_file_name = {machines[0]: Path(args.filename + '.log')}
+    # Appending to existing capture files makes for invalid capture files.
     for capture_file in capture_file_name.values():
         try:
             capture_file.unlink()
@@ -204,8 +236,9 @@ def main():
     task_list = [run_client(machine, capture_file_name[machine], log_file_name[machine], keys, passwords, command,
                             data_queue, print_queue, user) for machine in capture_file_name]
     task_list.append(data_queue_writer(data_queue))
-    separator = (max(len(str(capture_file.name)) for capture_file in capture_file_name.values()) + 2)  # For padding
+    # I want the file names and rates evenly separated so I find the longest file name and separate everything by that.
     capture_file_list = [capture_file for capture_file in capture_file_name.values()]
+    separator = max(len(str(capture_file.name)) for capture_file in capture_file_list) + 2  # For padding
     file_size = FileSize(print_queue, capture_file_list, separator, refresh_interval)
     task_list.append(file_size.file_size_worker())
     task_list.append(print_queue_worker(print_queue))
