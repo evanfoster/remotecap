@@ -3,7 +3,7 @@
 A small utility to perform tcpdump packet captures remotely and stream the results back via SSH. It supports capturing from multiple machines at once using asyncio and can optionally use [uvloop](https://github.com/MagicStack/uvloop) for increased performance. Additionally, it displays the capture file sizes and growth rates so you know how much data you're getting.
 
 ### Installation
-remotecap has two hard dependencies: `aiofiles` and `asyncssh`. Optional dependencies are:
+remotecap has three hard dependencies: `aiofiles`, `asyncssh`, and `py-term`. Optional dependencies are:
 
 * [`bcrypt`](https://github.com/pyca/bcrypt/) enables SSH private keys (**strongly recommended**)
 * [`libnacl`](https://github.com/saltstack/libnacl) to support more cryptographic options
@@ -13,7 +13,7 @@ remotecap has two hard dependencies: `aiofiles` and `asyncssh`. Optional depende
 To install all hard and optional dependencies (excluding libsodium), you would run this command:
 
 ```bash
-pip install aiofiles 'asyncssh[bcrypt,libnacl]' uvloop
+pip install aiofiles 'asyncssh[bcrypt,libnacl]' uvloop py-term
 ```
 
 Once you have all the necessary dependencies, clone this repo and run `python remotecap.py`

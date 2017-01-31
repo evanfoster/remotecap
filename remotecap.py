@@ -4,13 +4,13 @@ import asyncio
 
 import term
 
-try:
-    import uvloop
-
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-
-except NameError:
-    pass
+# try:
+#     import uvloop
+#
+#     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+#
+# except NameError:
+#     pass
 import sys
 from asyncio import Queue
 from pathlib import Path
@@ -61,6 +61,7 @@ async def run_client(machine, capture_file, log_file, keys, password, command, d
     def session_factory():
         return MySSHClientSession(capture_file, log_file, data_queue, print_queue)
 
+    #conn, client = await asyncssh.create_connection(asyncssh.SSHClient, machine, client_keys=[str(key) for key in keys],
     conn, client = await asyncssh.create_connection(asyncssh.SSHClient, machine, client_keys=[str(key) for key in keys],
                                                     username=user, known_hosts=None, password=password)
 
