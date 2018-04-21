@@ -60,9 +60,12 @@ class MySSHClientSession(asyncssh.SSHClientSession):
 async def run_client(machine, capture_file, log_file, keys, password, command, data_queue, print_queue, user):
     def session_factory():
         return MySSHClientSession(capture_file, log_file, data_queue, print_queue)
-
+    port = 22
+    if ':' in machine:
+        port = machine.split(':')[1]
+        machine = machine.split(':')[0]
     #conn, client = await asyncssh.create_connection(asyncssh.SSHClient, machine, client_keys=[str(key) for key in keys],
-    conn, client = await asyncssh.create_connection(asyncssh.SSHClient, machine, client_keys=[str(key) for key in keys],
+    conn, client = await asyncssh.create_connection(asyncssh.SSHClient, machine, port=port, client_keys=[str(key) for key in keys],
                                                     username=user, known_hosts=None, password=password)
 
     async with conn:
