@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 import argparse
 import asyncio
+import sys
+from asyncio import Queue
+from decimal import Decimal
+from pathlib import Path
+from typing import List, NewType, Union, Any
 
+import aiofiles
+import asyncssh
 import term
 
 # try:
@@ -11,14 +18,11 @@ import term
 #
 # except NameError:
 #     pass
-import sys
-from asyncio import Queue
-from pathlib import Path
-import aiofiles
-import asyncssh
+
+Number = NewType('Number', Union[int, float, Decimal])
 
 
-def sizeof_fmt(num, suffix='B'):
+def sizeof_fmt(num: Number, suffix: str = 'B') -> str:
     for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
         if abs(num) < 1024.0:
             return "%3.1f%s%s" % (num, unit, suffix)
@@ -27,7 +31,7 @@ def sizeof_fmt(num, suffix='B'):
 
 
 class MySSHClientSession(asyncssh.SSHClientSession):
-    def __init__(self, capture_file, log_file, data_queue, print_queue):
+    def __init__(self, capture_file: Path, log_file: Path, data_queue: Queue, print_queue: Queue):
         """
 
         :type print_queue: Queue
@@ -40,12 +44,11 @@ class MySSHClientSession(asyncssh.SSHClientSession):
         self.data_queue = data_queue
         self.print_queue = print_queue
 
-    def data_received(self, data, datatype):
+    def data_received(self, data: bytes, datatype: Any):
         """
         Dumb method that either dumps data into a queue to be written later, or prints it out if it's from stderr.
         Data is sent over as raw bytes to prevent nastiness. asyncio.Queue.put is a coroutine and I can't await here,
         so I need to put_nowait. My queue doesn't have a size limit, so it's fine.
-        :type data: bytes
         """
         if datatype == asyncssh.EXTENDED_DATA_STDERR:
             self.data_queue.put_nowait((self.log_file, data))
@@ -57,15 +60,17 @@ class MySSHClientSession(asyncssh.SSHClientSession):
             self.data_queue.put_nowait((self.log_file, str(exc).encode('ascii')))
 
 
-async def run_client(machine, capture_file, log_file, keys, password, command, data_queue, print_queue, user):
+async def run_client(machine: str, capture_file: Path, log_file: Path, keys: List[Path], password: str, command: str,
+                     data_queue: Queue, print_queue: Queue, user: str):
     def session_factory():
         return MySSHClientSession(capture_file, log_file, data_queue, print_queue)
+
     port = 22
     if ':' in machine:
         port = machine.split(':')[1]
         machine = machine.split(':')[0]
-    #conn, client = await asyncssh.create_connection(asyncssh.SSHClient, machine, client_keys=[str(key) for key in keys],
-    conn, client = await asyncssh.create_connection(asyncssh.SSHClient, machine, port=port, client_keys=[str(key) for key in keys],
+    conn, client = await asyncssh.create_connection(asyncssh.SSHClient, machine, port=port,
+                                                    client_keys=[str(key) for key in keys],
                                                     username=user, known_hosts=None, password=password)
 
     async with conn:
@@ -73,7 +78,7 @@ async def run_client(machine, capture_file, log_file, keys, password, command, d
         await chan.wait_closed()
 
 
-async def data_queue_writer(data_queue):
+async def data_queue_writer(data_queue: Queue):
     """
     Doing filesystem stuff with the asyncssh stuff is kinda difficult. I had planned on having this code in
     MySSHClientSession in the data_received method, but to avoid blocking I would need to await, which I can't do
@@ -84,28 +89,29 @@ async def data_queue_writer(data_queue):
     I'd have a process per machine instead of one shared process for all machines.
 
     But hey, premature optimization and all that jazz. This is cleaner anyways.
-
-    :type data_queue: Queue
     """
     while True:
+        # noinspection PyUnusedLocal
+        file: Path
+        # noinspection PyUnusedLocal
+        data: bytes
         file, data = await data_queue.get()
-        assert isinstance(file, Path)
-        assert isinstance(data, bytes)
         async with aiofiles.open(str(file), mode='ab') as fd:
             await fd.write(data)
         data_queue.task_done()
 
 
-async def print_queue_worker(print_queue):
+async def print_queue_worker(print_queue: Queue):
     """
     Function to move the cursor to a particular place and begin printing from the beginning of the line.
     Consumes rows and strings to print out of a queue.
-    :type print_queue: Queue
     """
     while True:
+        # noinspection PyUnusedLocal
+        row: int
+        # noinspection PyUnusedLocal
+        data: str
         row, data = await print_queue.get()
-        assert isinstance(row, int)
-        assert isinstance(data, str)
         term.pos(row, 1)
         term.clearLine()
         print('\r' + data, end='')
@@ -118,14 +124,7 @@ class FileSize(object):
     that over to print_queue_worker.
     """
 
-    def __init__(self, print_queue, capture_files, separator, refresh_time=5):
-        """
-
-        :type refresh_time: int
-        :type separator: int
-        :type capture_files: list[Path]
-        :type print_queue: Queue
-        """
+    def __init__(self, print_queue: Queue, capture_files: List[Path], separator: int, refresh_time: int = 5):
         self.print_queue = print_queue
         self.capture_files = capture_files
         self.separator = separator
@@ -180,12 +179,13 @@ class FileSize(object):
 
 def main():
     home_directory = Path('~').expanduser()
+
     parser = argparse.ArgumentParser(prog='remotecap', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     help_string = 'File to write to if performing the capture on a single machine. Folder to put captures in if ' \
                   'capturing from multiple machines. Required.'
     parser.add_argument('-w', '--filename', type=str, help=help_string, required=True)
     help_string = '''Machines to perform the capture on. Required.'''
-    parser.add_argument('machines', nargs='+', help=help_string)
+    parser.add_argument('machines', nargs='+', type=str, help=help_string)
     help_string = '''Filter to pass to tcpdump on the remote machine(s).'''
     parser.add_argument('-f', '--filter', default='not port 22', type=str, help=help_string)
     default_key_location = home_directory / '.ssh' / 'id_rsa'
@@ -201,6 +201,7 @@ def main():
     parser.add_argument('-u', '--user', type=str, help=help_string, default='root')
     help_string = 'Interval to refresh file size and growth rates at.'
     parser.add_argument('-r', '--refresh-interval', type=int, help=help_string, default=5)
+
     args = parser.parse_args()
     # Janky hack to override this issue: https://bugs.python.org/issue16399
     # Basically, if you have a default option and append action, your default will be included instead of being
@@ -208,14 +209,14 @@ def main():
     if len(args.key) >= 2:
         keys = [Path(key) for key in args.key if key is not default_key_location]
     else:
-        keys = args.key
+        keys: List[Path] = args.key
     if not any([key.exists() for key in keys]):
         print("One of the specified private keys doesn't exist!")
         print(*keys)
         sys.exit(1)
-    machines = args.machines
-    interface = args.interface
-    capture_filter = args.filter
+    machines: List[str] = args.machines
+    interface: str = args.interface
+    capture_filter: str = args.filter
     passwords = args.password
     packet_length = args.packet_length
     user = args.user
