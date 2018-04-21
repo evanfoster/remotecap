@@ -8,12 +8,11 @@ remotecap has three hard dependencies: `aiofiles`, `asyncssh`, and `py-term`. Op
 * [`bcrypt`](https://github.com/pyca/bcrypt/) enables SSH private keys (**strongly recommended**)
 * [`libnacl`](https://github.com/saltstack/libnacl) to support more cryptographic options
   * `libnacl` requires [`libsodium`](https://github.com/jedisct1/libsodium) which you should install via your distro's package manager
-* [`uvloop`](https://github.com/MagicStack/uvloop) for increased performance
 
 To install all hard and optional dependencies (excluding libsodium), you would run this command:
 
 ```bash
-pip install aiofiles 'asyncssh[bcrypt,libnacl]' uvloop py-term
+pip install 'remotecap[recommends]'
 ```
 
 Once you have all the necessary dependencies, clone this repo and run `python remotecap.py`
