@@ -11,6 +11,7 @@ from typing import List, NewType, Union
 
 import aiofiles
 import asyncssh
+# noinspection PyPackageRequirements
 import term
 
 # try:
@@ -265,4 +266,5 @@ def main():
         print('Done.')
 
 
-main()
+if __name__ == '__main__':
+    main()
