@@ -1,27 +1,31 @@
 ## remotecap
 
-A small utility to perform tcpdump packet captures remotely and stream the results back via SSH. It supports capturing from multiple machines at once using asyncio and can optionally use [uvloop](https://github.com/MagicStack/uvloop) for increased performance. Additionally, it displays the capture file sizes and growth rates so you know how much data you're getting.
+A small utility to perform tcpdump packet captures remotely and stream the results back via SSH. It supports capturing from multiple machines at once using asyncio. Additionally, it displays the capture file sizes and growth rates so you know how much data you're getting.
 
 ### Installation
-remotecap has three hard dependencies: `aiofiles`, `asyncssh`, and `py-term`. Optional dependencies are:
+remotecap requires Python >= 3.6. remotecap has three hard dependencies: [`aiofiles`](https://github.com/Tinche/aiofiles), [`asyncssh`](https://github.com/ronf/asyncssh), and [`py-term`](https://github.com/gravmatt/py-term). Optional dependencies are:
 
 * [`bcrypt`](https://github.com/pyca/bcrypt/) enables SSH private keys (**strongly recommended**)
 * [`libnacl`](https://github.com/saltstack/libnacl) to support more cryptographic options
   * `libnacl` requires [`libsodium`](https://github.com/jedisct1/libsodium) which you should install via your distro's package manager
+* [`gssapi`](https://github.com/pythongssapi/python-gssapi)
+* [`pyOpenSSL`](https://github.com/pyca/pyopenssl)
 
-To install all hard and optional dependencies (excluding libsodium), you would run this command:
+To install all hard and optional dependencies (excluding libsodium), run this command:
 
 ```bash
 pip install 'remotecap[recommends]'
 ```
 
-Once you have all the necessary dependencies, clone this repo and run `python remotecap.py`
+I would strongly recommend that you do this in a `virtualenv`.
+
+From there, you should be able to just run `remotecap`
 
 ### Usage
 ```text
-usage: remotecap [-h] -w FILENAME [-f FILTER] [-k KEY] [-i INTERFACE]
-                 [-p PASSWORD] [-s PACKET_LENGTH] [-u USER]
-                 [-r REFRESH_INTERVAL]
+usage: remotecap [-h] -w FILENAME [-f FILTER] [-k KEY] [-i INTERFACE] [-p]
+                 [-s PACKET_LENGTH] [-u USER] [-r REFRESH_INTERVAL]
+                 [-n KNOWN_HOSTS]
                  machines [machines ...]
 
 positional arguments:
@@ -38,13 +42,13 @@ optional arguments:
                         (default: not port 22)
   -k KEY, --key KEY     Location of SSH private keys to use. Can be specified
                         multiple times. (default:
-                        [PosixPath('/home/evan/.ssh/id_rsa')])
+                        [PosixPath('/home/$USER/.ssh/id_rsa')])
   -i INTERFACE, --interface INTERFACE
                         Interface to perform the capture with on the remote
                         machine(s). (default: any)
-  -p PASSWORD, --password PASSWORD
-                        Password to use for SSH. SSH keys are recommended
-                        instead. (default: None)
+  -p, --password-prompt
+                        Prompt for password to use for SSH. SSH keys are
+                        recommended instead. (default: False)
   -s PACKET_LENGTH, --packet-length PACKET_LENGTH
                         Length of packets to capture. (default: 0)
   -u USER, --user USER  User to SSH as. The user must have sufficient rights.
@@ -52,6 +56,11 @@ optional arguments:
   -r REFRESH_INTERVAL, --refresh-interval REFRESH_INTERVAL
                         Interval to refresh file size and growth rates at.
                         (default: 5)
+  -n KNOWN_HOSTS, --known-hosts KNOWN_HOSTS
+                        Known hosts file to use. Specify "None" if you want to
+                        disable known hosts. (default:
+                        /home/$USER/.ssh/known_hosts)
+<Paste>
 ```
 
 ### Reasons this exists
@@ -65,5 +74,5 @@ optional arguments:
 
 ### Various notes
 
-* Currently, there are a couple tight loops that have `assert` statements in them. These can be pretty expensive and aren't really necessary for things to run. If you're running into issues, try running `python` with the `-O` flag, which will strip out asserts during compilation.
+* If you get tracebacks complaining about key length, you may need to disable known hosts checking. `cryptography` is a very picky library and it's hard to do much of anything about it.
 
