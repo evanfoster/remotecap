@@ -59,28 +59,30 @@ async def run_client(user: str, host: str, command: str, cap_file: Path, keys: L
     log_file = cap_file.with_suffix('.log')
 
     async with semaphore:
-        async with aiofiles.open(str(cap_file), mode='wb') as cap_fd, aiofiles.open(str(log_file), mode='wb') as log_fd:
-            def session_factory():
-                return AsyncWriterSSHClientSession(cap_fd, log_fd)
-
+        async with aiofiles.open(str(cap_file), mode='wb', buffering=0) as cap_fd, aiofiles.open(str(log_file), mode='wb', buffering=0) as log_fd:
             client_keys = list(map(str, keys))
             port = 22
             if ':' in host:
                 port = int(host.split(':')[1])
                 host = host.split(':')[0]
-
             # noinspection PyUnusedLocal
             connection: asyncssh.SSHClientConnection
-            async with asyncssh.connect(host, port, client_keys=client_keys, username=user,
-                                        known_hosts=str(known_hosts), password=password) as connection:
+            async with asyncssh.connect(host, port, client_keys=client_keys, username=user, known_hosts=str(known_hosts), password=password) as connection:
+                await connection.run(command, input=sudo_password, stdout=cap_fd, stderr=log_fd, encoding=None, check=True)
+            # def session_factory():
+            #     return AsyncWriterSSHClientSession(cap_fd, log_fd)
+            # noinspection PyUnusedLocal
+            # connection: asyncssh.SSHClientConnection
+            # async with asyncssh.connect(host, port, client_keys=client_keys, username=user,
+            #                             known_hosts=str(known_hosts), password=password) as connection:
                 # noinspection PyUnusedLocal
-                channel: asyncssh.SSHClientChannel
+                # channel: asyncssh.SSHClientChannel
                 # noinspection PyTypeChecker
-                channel, _ = await connection.create_session(session_factory, command, encoding=None)
-                if len(sudo_password) > 0:
-                    channel.write(sudo_password)
-                    channel.write_eof()
-                await channel.wait_closed()
+                # channel, _ = await connection.create_session(session_factory, command, encoding=None)
+                # if len(sudo_password) > 0:
+                #     channel.write(sudo_password)
+                #     channel.write_eof()
+                # await channel.wait_closed()
 
 
 class FileSize(object):
