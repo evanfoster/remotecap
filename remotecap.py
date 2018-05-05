@@ -2,7 +2,6 @@
 import argparse
 import asyncio
 import sys
-from asyncio import Queue
 from decimal import Decimal
 from getpass import getpass
 from pathlib import Path
@@ -10,23 +9,21 @@ from shlex import quote
 from typing import List, NewType, Union
 
 import aiofiles
+import aiofiles.base
 import asyncssh
 # noinspection PyPackageRequirements
 import term
-
-# try:
-#     import uvloop
-#
-#     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-#
-# except NameError:
-#     pass
 
 Number = NewType('Number', Union[int, float, Decimal])
 
 
 def sizeof_fmt(num: Number, suffix: str = 'B') -> str:
-    for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
+    """
+    Takes a number (size in bytes), returns the human readable representation of that (B, KB, MB, GB, etc).
+    Thanks Fred!
+    https://web.archive.org/web/20111010015624/http://blogmag.net/blog/read/38/Print_human_readable_file_size
+    """
+    for unit in ('', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi'):
         if abs(num) < 1024.0:
             return "%3.1f%s%s" % (num, unit, suffix)
         num /= 1024.0
@@ -35,11 +32,18 @@ def sizeof_fmt(num: Number, suffix: str = 'B') -> str:
 
 class AsyncWriterSSHClientSession(asyncssh.SSHClientSession):
     def __init__(self, cap_fd, log_fd):
-
         self.log_fd = log_fd
         self.cap_fd = cap_fd
 
     def data_received(self, data, datatype):
+        """
+        asyncssh callback that writes data whenever it's received. The only thing that is noteworthy about this is that
+        the writes here are unsafe. asyncio.ensure_future doesn't allow me to guarantee that the writes completed
+        successfully. This isn't a huge deal for packet traces, but it's worth keeping in mind.
+
+        I've filed an issue on the asyncssh tracker about this:
+        https://github.com/ronf/asyncssh/issues/139
+        """
         if datatype == asyncssh.EXTENDED_DATA_STDERR:
             asyncio.ensure_future(self.log_fd.write(data))
         else:
@@ -50,60 +54,47 @@ class AsyncWriterSSHClientSession(asyncssh.SSHClientSession):
             asyncio.ensure_future(self.log_fd.write(str(exc).encode()))
 
 
-async def run_client(user: str, machine: str, command: str, capture_file: Path, keys: List[Path], password: str = None,
-                     known_hosts: Path = None):
-    log_file = capture_file.with_suffix('.log')
+async def run_client(user: str, host: str, command: str, cap_file: Path, keys: List[Path], password: str = None,
+                     known_hosts: Path = None, sudo_password: bytes = b'', semaphore: asyncio.Semaphore = None):
+    log_file = cap_file.with_suffix('.log')
 
-    async with aiofiles.open(str(capture_file), mode='wb') as cap_fd, aiofiles.open(str(log_file), mode='wb') as log_fd:
-        def session_factory():
-            return AsyncWriterSSHClientSession(cap_fd, log_fd)
+    async with semaphore:
+        async with aiofiles.open(str(cap_file), mode='wb') as cap_fd, aiofiles.open(str(log_file), mode='wb') as log_fd:
+            def session_factory():
+                return AsyncWriterSSHClientSession(cap_fd, log_fd)
 
-        client_keys = [str(key) for key in keys]
-        port = 22
-        if ':' in machine:
-            port = machine.split(':')[1]
-            machine = machine.split(':')[0]
+            client_keys = list(map(str, keys))
+            port = 22
+            if ':' in host:
+                port = int(host.split(':')[1])
+                host = host.split(':')[0]
 
-        # noinspection PyUnusedLocal
-        connection: asyncssh.SSHClientConnection
-        async with asyncssh.connect(
-                machine, port, client_keys=client_keys, username=user, known_hosts=str(known_hosts),
-                password=password) as connection:
             # noinspection PyUnusedLocal
-            channel: asyncssh.SSHClientChannel
-            # noinspection PyTypeChecker
-            channel, _ = await connection.create_session(session_factory, command, encoding=None)
-            await channel.wait_closed()
-
-
-async def print_queue_worker(print_queue: Queue):
-    """
-    Function to move the cursor to a particular place and begin printing from the beginning of the line.
-    Consumes rows and strings to print out of a queue.
-    """
-    while True:
-        # noinspection PyUnusedLocal
-        row: int
-        # noinspection PyUnusedLocal
-        data: str
-        row, data = await print_queue.get()
-        term.pos(row, 1)
-        term.clearLine()
-        print('\r' + data, end='')
+            connection: asyncssh.SSHClientConnection
+            async with asyncssh.connect(host, port, client_keys=client_keys, username=user,
+                                        known_hosts=str(known_hosts), password=password) as connection:
+                # noinspection PyUnusedLocal
+                channel: asyncssh.SSHClientChannel
+                # noinspection PyTypeChecker
+                channel, _ = await connection.create_session(session_factory, command, encoding=None)
+                if len(sudo_password) > 0:
+                    channel.write(sudo_password)
+                    channel.write_eof()
+                await channel.wait_closed()
 
 
 class FileSize(object):
     """
     Class that calculates the file size of capture files and rate at which those files are growing. Is terminal-size
-    aware so changing the size of your window won't screw things up. Doesn't do the printing itself, instead punting
-    that over to print_queue_worker.
+    aware so changing the size of your window won't screw things up.
     """
 
-    def __init__(self, print_queue: Queue, capture_files: List[Path], refresh_time: int = 5):
-        self.print_queue = print_queue
-        self.capture_files = capture_files
-        self.refresh_time = refresh_time
-        self.separator_width = max(len(str(capture_file.name)) for capture_file in capture_files) + 4  # For padding
+    def __init__(self, host_count: int, semaphore: asyncio.Semaphore, *args: Path, refresh_interval: int = 5):
+        self.host_count = host_count
+        self.semaphore = semaphore
+        self.capture_files = args
+        self.refresh_interval = refresh_interval
+        self.separator_width = max(len(str(capture_file.name)) for capture_file in args) + 4  # For padding
         self.old_values = {}
         # Tuple containing the # rows and # columns
         self.size = (0, 0)
@@ -117,7 +108,13 @@ class FileSize(object):
         term.clear()
         init = 'Capture file:'.ljust(self.separator_width)
         init += ''.join(str(capture_file.name).ljust(self.separator_width) for capture_file in self.capture_files)
-        self.print_queue.put_nowait((self.size[0] - 4, init))
+        self.print(self.size[0] - 4, init)
+
+    @staticmethod
+    def print(row: int, data: str):
+        term.pos(row, 1)
+        term.clearLine()
+        print(f'\r{data}', end='')
 
     async def file_size_worker(self):
         """
@@ -125,7 +122,12 @@ class FileSize(object):
         :return:
         :rtype:
         """
-        while True:
+        # Want to give the other coroutines a chance to increment the semaphore
+        await asyncio.sleep(.5)
+        # I wish asyncio.Semaphore made the value public. I know it's probably to prevent people from doing stupid
+        # things, but sometimes it's nice to be dumb. Doing this so we can die when all of our captures have died.
+        # noinspection PyProtectedMember
+        while self.semaphore._value < self.host_count:
             size = term.getSize()
             # Terminal size has changed, we need to set up again or things will look wonky.
             if size != self.size:
@@ -138,45 +140,45 @@ class FileSize(object):
             except FileNotFoundError:
                 # Since the file size worker starts at the same time we begin capturing, odds are the file won't exist
                 # for a while.
-                await asyncio.sleep(self.refresh_time)
+                await asyncio.sleep(self.refresh_interval)
                 continue
 
             size_string = 'File size:'.ljust(self.separator_width)
             size_string += ''.join(
                     str(sizeof_fmt(capture_file_size)).ljust(self.separator_width) for capture_file_size in
                     capture_files.values())
-            self.print_queue.put_nowait((self.size[0] - 1, size_string))
+            self.print(self.size[0] - 1, size_string)
             # Can't make a rate if you don't have a delta.
             if len(self.old_values) > 0:
                 capture_growth_rates = []
                 for capture_file, capture_file_size in capture_files.items():
-                    size_delta = (capture_file_size - self.old_values[capture_file]) / self.refresh_time
+                    size_delta = (capture_file_size - self.old_values[capture_file]) / self.refresh_interval
                     file_growth = sizeof_fmt(size_delta, suffix='Bps')
                     capture_growth_rates.append(file_growth)
 
                 rate_string = 'Rate:'.ljust(self.separator_width)
                 rate_string += ''.join(rate.ljust(self.separator_width) for rate in capture_growth_rates)
-                self.print_queue.put_nowait((self.size[0] - 2, rate_string))
+                self.print(self.size[0] - 2, rate_string)
             self.old_values = capture_files.copy()
 
-            await asyncio.sleep(self.refresh_time)
+            await asyncio.sleep(self.refresh_interval)
 
 
 def main():
     home_directory = Path('~').expanduser()
 
     parser = argparse.ArgumentParser(prog='remotecap', formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    help_string = 'File to write to if performing the capture on a single machine. Folder to put captures in if ' \
-                  'capturing from multiple machines. Required.'
+    help_string = 'File to write to if performing the capture on a single host. Folder to put captures in if ' \
+                  'capturing from multiple hosts. Required.'
     parser.add_argument('-w', '--filename', type=Path, help=help_string, required=True)
-    help_string = '''Machines to perform the capture on. Required.'''
-    parser.add_argument('machines', nargs='+', type=str, help=help_string)
-    help_string = '''Filter to pass to tcpdump on the remote machine(s).'''
+    help_string = '''Hosts to perform the capture on. Required.'''
+    parser.add_argument('hosts', nargs='+', type=str, help=help_string)
+    help_string = '''Filter to pass to tcpdump on the remote host(s).'''
     parser.add_argument('-f', '--filter', default='not port 22', type=str, help=help_string)
     default_key_location = home_directory / '.ssh' / 'id_rsa'
     help_string = '''Location of SSH private keys to use. Can be specified multiple times.'''
-    parser.add_argument('-k', '--key', default=[default_key_location], action='append', help=help_string, type=Path)
-    help_string = '''Interface to perform the capture with on the remote machine(s).'''
+    parser.add_argument('-k', '--key', action='append', help=help_string, type=Path)
+    help_string = '''Interface to perform the capture with on the remote host(s).'''
     parser.add_argument('-i', '--interface', default='any', type=str, help=help_string)
     help_string = 'Prompt for password to use for SSH. SSH keys are recommended instead.'
     parser.add_argument('-p', '--password-prompt', default=False, action='store_true', help=help_string)
@@ -189,46 +191,59 @@ def main():
     help_string = 'Known hosts file to use. Specify "None" if you want to disable known hosts.'
     default_known_hosts_location = home_directory / '.ssh' / 'known_hosts'
     parser.add_argument('-n', '--known-hosts', default=default_known_hosts_location, help=help_string)
+    help_string = 'Escalate privileges (sudo) and prompt for password'
+    parser.add_argument('-e', '--sudo', action='store_true', default=False, help=help_string)
+    help_string = "Path to tcpdump on the system. Needed if tcpdump isn't in your path."
+    parser.add_argument('-c', '--command-path', default='tcpdump', type=str, help=help_string)
 
     args = parser.parse_args()
     # Janky hack to override this issue: https://bugs.python.org/issue16399
     # Basically, if you have a default option and append action, your default will be included instead of being
     # clobbered. Gyar!
-    if len(args.key) >= 2:
-        keys: List[Path] = [key for key in args.key if key is not default_key_location]
+    if args.key is None:
+        keys: List[Path] = [default_key_location]
     else:
-        keys: List[Path] = args.key
+        keys: List[Path] = [key for key in args.key if key is not default_key_location]
+
     if not any([key.exists() for key in keys]):
         print("One of the specified private keys doesn't exist!")
         print(*keys)
         sys.exit(1)
-    machines: List[str] = args.machines
+    hosts: List[str] = args.hosts
     # Using shlex.quote to prevent anyone from injecting random shell commands.
     # No ; rm -rf --no-preserve-root / ; for us here!
     interface: str = quote(args.interface)
     capture_filter: str = quote(args.filter)
+    command_path: str = args.command_path
+    if command_path != 'tcpdump':
+        command_path = quote(command_path)
     # No need to quote this as argparse is already enforcing int type
     packet_length: int = args.packet_length
     user: str = args.user
     refresh_interval: int = args.refresh_interval
     known_hosts: Union[str, Path, None] = args.known_hosts
+    should_sudo: bool = args.sudo
+
     if known_hosts == 'None':
         known_hosts = None
     elif isinstance(known_hosts, str):
         known_hosts = Path(known_hosts)
+        if not known_hosts.exists():
+            print(f'Known hosts file {known_hosts} does not exist.')
+            sys.exit(1)
 
     password: Union[None, str] = None
     if args.password_prompt:
-        password = getpass()
+        password = getpass(prompt='SSH password: ')
 
     file_path: Path = args.filename
     file_path = file_path.expanduser().resolve()
-    # If we're capturing from more than one machine, we want to create a folder containing our capture files.
-    if len(machines) > 1:
+    # If we're capturing from more than one host, we want to create a folder containing our capture files.
+    if len(hosts) > 1:
         file_path.mkdir(exist_ok=True)
-        capture_files = {machine: file_path / f'{machine}.cap' for machine in machines}
+        capture_files = {host: file_path / f'{host}.cap' for host in hosts}
     else:
-        capture_files = {machines[0]: file_path}
+        capture_files = {hosts[0]: file_path}
 
     # Appending to existing capture files makes for invalid capture files.
     for capture_file in capture_files.values():
@@ -237,17 +252,22 @@ def main():
         except FileNotFoundError:
             pass
 
-    command = f"tcpdump -i {interface} -s {packet_length} -U -w - '{capture_filter}'"
+    sudo = ''
+    sudo_password: bytes = b''
+    if should_sudo:
+        sudo = 'sudo -S '
+        sudo_password = getpass(prompt='Sudo password: ').encode() + b'\n'
+    command = f"{sudo}{command_path} -i {interface} -s {packet_length} -U -w - '{capture_filter}'"
 
-    task_list = [run_client(user, machine, command, file, keys, password=password, known_hosts=known_hosts) for
-                 machine, file in capture_files.items()]
+    semaphore = asyncio.Semaphore(len(capture_files))
+    task_list = []
+    for host, file in capture_files.items():
+        task_list.append(run_client(user, host, command, file, keys, semaphore=semaphore, password=password,
+                                    known_hosts=known_hosts, sudo_password=sudo_password))
 
-    print_queue = Queue()
-
-    file_size = FileSize(print_queue, [*capture_files.values()], refresh_interval)
+    file_size = FileSize(len(capture_files), semaphore, *capture_files.values(), refresh_interval=refresh_interval)
 
     task_list.append(file_size.file_size_worker())
-    task_list.append(print_queue_worker(print_queue))
 
     tasks = asyncio.gather(*task_list)
     loop = asyncio.get_event_loop()
@@ -263,6 +283,8 @@ def main():
         all_tasks.exception()
     finally:
         loop.close()
+        [print(f"{capture_file.stem}\n{capture_file.with_suffix('.log').read_text()}") for capture_file in
+         capture_files.values()]
         print('Done.')
 
 
