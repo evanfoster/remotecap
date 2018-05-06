@@ -195,6 +195,8 @@ def main():
     parser.add_argument('-e', '--sudo', action='store_true', default=False, help=help_string)
     help_string = "Path to tcpdump on the system. Needed if tcpdump isn't in your path."
     parser.add_argument('-c', '--command-path', default='tcpdump', type=str, help=help_string)
+    help_string = "Do not take over the screen."
+    parser.add_argument('-q', '--quiet', action='store_true', default=False, help=help_string)
 
     args = parser.parse_args()
     # Janky hack to override this issue: https://bugs.python.org/issue16399
@@ -223,6 +225,7 @@ def main():
     refresh_interval: int = args.refresh_interval
     known_hosts: Union[str, Path, None] = args.known_hosts
     should_sudo: bool = args.sudo
+    be_quiet: bool = args.quiet
 
     if known_hosts == 'None':
         known_hosts = None
@@ -267,7 +270,8 @@ def main():
 
     file_size = FileSize(len(capture_files), semaphore, *capture_files.values(), refresh_interval=refresh_interval)
 
-    task_list.append(file_size.file_size_worker())
+    if not be_quiet:
+        task_list.append(file_size.file_size_worker())
 
     tasks = asyncio.gather(*task_list)
     loop = asyncio.get_event_loop()

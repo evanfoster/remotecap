@@ -25,27 +25,26 @@ From there, you should be able to just run `remotecap`
 ```text
 usage: remotecap [-h] -w FILENAME [-f FILTER] [-k KEY] [-i INTERFACE] [-p]
                  [-s PACKET_LENGTH] [-u USER] [-r REFRESH_INTERVAL]
-                 [-n KNOWN_HOSTS]
-                 machines [machines ...]
+                 [-n KNOWN_HOSTS] [-e] [-c COMMAND_PATH] [-q]
+                 hosts [hosts ...]
 
 positional arguments:
-  machines              Machines to perform the capture on. Required.
+  hosts                 Hosts to perform the capture on. Required.
 
 optional arguments:
   -h, --help            show this help message and exit
   -w FILENAME, --filename FILENAME
                         File to write to if performing the capture on a single
-                        machine. Folder to put captures in if capturing from
-                        multiple machines. Required. (default: None)
+                        host. Folder to put captures in if capturing from
+                        multiple hosts. Required. (default: None)
   -f FILTER, --filter FILTER
-                        Filter to pass to tcpdump on the remote machine(s).
+                        Filter to pass to tcpdump on the remote host(s).
                         (default: not port 22)
   -k KEY, --key KEY     Location of SSH private keys to use. Can be specified
-                        multiple times. (default:
-                        [PosixPath('/home/$USER/.ssh/id_rsa')])
+                        multiple times. (default: None)
   -i INTERFACE, --interface INTERFACE
                         Interface to perform the capture with on the remote
-                        machine(s). (default: any)
+                        host(s). (default: any)
   -p, --password-prompt
                         Prompt for password to use for SSH. SSH keys are
                         recommended instead. (default: False)
@@ -59,8 +58,13 @@ optional arguments:
   -n KNOWN_HOSTS, --known-hosts KNOWN_HOSTS
                         Known hosts file to use. Specify "None" if you want to
                         disable known hosts. (default:
-                        /home/$USER/.ssh/known_hosts)
-<Paste>
+                        /home/evan/.ssh/known_hosts)
+  -e, --sudo            Escalate privileges (sudo) and prompt for password
+                        (default: False)
+  -c COMMAND_PATH, --command-path COMMAND_PATH
+                        Path to tcpdump on the system. Needed if tcpdump isn't
+                        in your path. (default: tcpdump)
+  -q, --quiet           Do not take over the screen. (default: False)
 ```
 
 ### Reasons this exists
