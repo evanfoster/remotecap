@@ -30,38 +30,14 @@ def sizeof_fmt(num: Number, suffix: str = 'B') -> str:
     return "%.1f%s%s" % (num, 'Yi', suffix)
 
 
-class AsyncWriterSSHClientSession(asyncssh.SSHClientSession):
-    def __init__(self, cap_fd, log_fd):
-        self.log_fd = log_fd
-        self.cap_fd = cap_fd
-
-    def data_received(self, data, datatype):
-        """
-        asyncssh callback that writes data whenever it's received. The only thing that is noteworthy about this is that
-        the writes here are unsafe. asyncio.ensure_future doesn't allow me to guarantee that the writes completed
-        successfully. This isn't a huge deal for packet traces, but it's worth keeping in mind.
-
-        I've filed an issue on the asyncssh tracker about this:
-        https://github.com/ronf/asyncssh/issues/139
-        """
-        if datatype == asyncssh.EXTENDED_DATA_STDERR:
-            asyncio.ensure_future(self.log_fd.write(data))
-        else:
-            asyncio.ensure_future(self.cap_fd.write(data))
-
-    def connection_lost(self, exc):
-        if exc:
-            asyncio.ensure_future(self.log_fd.write(str(exc).encode()))
-
-
 async def run_client(user: str, host: str, command: str, cap_file: Path, keys: List[Path], password: str = None,
                      known_hosts: Path = None, sudo_password: bytes = b'', semaphore: asyncio.Semaphore = None):
     log_file = cap_file.with_suffix('.log')
 
     async with semaphore:
         async with aiofiles.open(str(cap_file), mode='wb') as cap_fd, aiofiles.open(str(log_file), mode='wb') as log_fd:
-            def session_factory():
-                return AsyncWriterSSHClientSession(cap_fd, log_fd)
+            # def session_factory():
+            #     return AsyncWriterSSHClientSession(cap_fd, log_fd)
 
             client_keys = list(map(str, keys))
             port = 22
@@ -73,14 +49,10 @@ async def run_client(user: str, host: str, command: str, cap_file: Path, keys: L
             connection: asyncssh.SSHClientConnection
             async with asyncssh.connect(host, port, client_keys=client_keys, username=user,
                                         known_hosts=str(known_hosts), password=password) as connection:
-                # noinspection PyUnusedLocal
-                channel: asyncssh.SSHClientChannel
-                # noinspection PyTypeChecker
-                channel, _ = await connection.create_session(session_factory, command, encoding=None)
+                stdin = b''
                 if len(sudo_password) > 0:
-                    channel.write(sudo_password)
-                    channel.write_eof()
-                await channel.wait_closed()
+                    stdin = sudo_password
+                await connection.run(command, input=stdin, stdout=cap_fd, stderr=log_fd, encoding=None)
 
 
 class FileSize(object):
