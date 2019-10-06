@@ -3,18 +3,22 @@
 A small utility to perform tcpdump packet captures remotely and stream the results back via SSH. It supports capturing from multiple machines at once using asyncio. Additionally, it displays the capture file sizes and growth rates so you know how much data you're getting.
 
 ### Installation
-remotecap requires Python >= 3.6. remotecap has three hard dependencies: [`aiofiles`](https://github.com/Tinche/aiofiles), [`asyncssh`](https://github.com/ronf/asyncssh), and [`py-term`](https://github.com/gravmatt/py-term). Optional dependencies are:
+remotecap requires Python >= 3.7. remotecap has these hard dependencies: 
 
+* [`aiofiles`](https://github.com/Tinche/aiofiles)
+* [`asyncssh`](https://github.com/ronf/asyncssh)
+* [`asciimatics`](https://github.com/peterbrittain/asciimatics)
 * [`bcrypt`](https://github.com/pyca/bcrypt/) enables SSH private keys (**strongly recommended**)
 * [`libnacl`](https://github.com/saltstack/libnacl) to support more cryptographic options
   * `libnacl` requires [`libsodium`](https://github.com/jedisct1/libsodium) which you should install via your distro's package manager
 * [`gssapi`](https://github.com/pythongssapi/python-gssapi)
 * [`pyOpenSSL`](https://github.com/pyca/pyopenssl)
 
-To install all hard and optional dependencies (excluding libsodium), run this command:
+
+To install all hard and development dependencies, run this command:
 
 ```bash
-pip install 'remotecap[recommends]'
+pip install 'remotecap[dev]'
 ```
 
 I would strongly recommend that you do this in a `virtualenv`.
@@ -25,7 +29,7 @@ From there, you should be able to just run `remotecap`
 ```text
 usage: remotecap [-h] -w FILENAME [-f FILTER] [-k KEY] [-i INTERFACE] [-p]
                  [-s PACKET_LENGTH] [-u USER] [-r REFRESH_INTERVAL]
-                 [-n KNOWN_HOSTS] [-e] [-c COMMAND_PATH] [-q]
+                 [-n KNOWN_HOSTS] [-e] [-c COMMAND_PATH] [-q] [-d]
                  hosts [hosts ...]
 
 positional arguments:
@@ -58,13 +62,14 @@ optional arguments:
   -n KNOWN_HOSTS, --known-hosts KNOWN_HOSTS
                         Known hosts file to use. Specify "None" if you want to
                         disable known hosts. (default:
-                        /home/evan/.ssh/known_hosts)
+                        /home/USER/.ssh/known_hosts)
   -e, --sudo            Escalate privileges (sudo) and prompt for password
                         (default: False)
   -c COMMAND_PATH, --command-path COMMAND_PATH
                         Path to tcpdump on the system. Needed if tcpdump isn't
                         in your path. (default: tcpdump)
   -q, --quiet           Do not take over the screen. (default: False)
+  -d, --debugger
 ```
 
 ### Reasons this exists
