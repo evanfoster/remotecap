@@ -326,5 +326,10 @@ async def main():
         print("Done.")
 
 
+# Hack to make entrypoints work
+def run():
+    asyncio.run(main())
+
+
 if __name__ == "__main__":
     asyncio.run(main())
